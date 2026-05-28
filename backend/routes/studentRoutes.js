@@ -79,9 +79,10 @@ router.get('/dashboard', async (req, res) => {
       }
     }
 
-    // Map column naming conventions to support old frontend expectation
+    // Map column naming conventions and id to _id to support old frontend expectation
     const mappedStudent = {
       ...student,
+      _id: student.id,
       rollNumber: student.roll_number,
       currentSemester: student.current_semester,
       cgpa: parseFloat(student.cgpa)
@@ -89,6 +90,7 @@ router.get('/dashboard', async (req, res) => {
 
     const mappedCourses = courses.map(c => ({
       ...c,
+      _id: c.id,
       courseCode: c.course_code,
       facultyRef: c.facultyRef ? { name: c.facultyRef.name, designation: c.facultyRef.designation } : null
     }));
@@ -262,9 +264,10 @@ router.get('/fees', async (req, res) => {
 
     if (error) throw error;
 
-    // Map column naming conventions to support old frontend expectation
+    // Map column naming conventions and id to _id to support old frontend expectation
     const mapped = fees.map(f => ({
       ...f,
+      _id: f.id,
       feeType: f.fee_type,
       dueDate: f.due_date,
       transactionId: f.transaction_id,
@@ -297,9 +300,10 @@ router.post('/fees/pay/:id', async (req, res) => {
 
     if (error) throw error;
 
-    // Map column naming conventions to support old frontend expectation
+    // Map column naming conventions and id to _id to support old frontend expectation
     const mappedFee = {
       ...fee,
+      _id: fee.id,
       feeType: fee.fee_type,
       dueDate: fee.due_date,
       transactionId: fee.transaction_id,

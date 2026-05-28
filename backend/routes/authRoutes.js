@@ -85,7 +85,7 @@ router.post('/register-student', async (req, res) => {
       email: user.email,
       role: user.role,
       token: generateToken(user.id),
-      studentProfile: student
+      studentProfile: student ? { ...student, _id: student.id } : null
     });
   } catch (error) {
     console.error(error);
@@ -139,7 +139,7 @@ router.post('/login', async (req, res) => {
       email: user.email,
       role: user.role,
       token: generateToken(user.id),
-      profile
+      profile: profile ? { ...profile, _id: profile.id } : null
     });
   } catch (error) {
     console.error(error);
@@ -184,7 +184,7 @@ router.get('/profile', protect, async (req, res) => {
         email: user.email,
         role: user.role
       },
-      profile
+      profile: profile ? { ...profile, _id: profile.id } : null
     });
   } catch (error) {
     console.error(error);

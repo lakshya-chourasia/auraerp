@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogIn, GraduationCap, Users, ShieldAlert, Sparkles } from 'lucide-react';
+import { LogIn, GraduationCap, Users, ShieldAlert, Sparkles, UserCheck, BookOpen } from 'lucide-react';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -109,15 +109,40 @@ const Login = () => {
         </div>
 
         {/* Demo Accounts - highly valuable for college interviews to demonstrate quickly! */}
-        <div className="mt-8 pt-6 border-t border-slate-800">
-          <p className="text-slate-500 text-xxs uppercase tracking-wider font-bold mb-3 text-center">Demo Administrator Login</p>
-          <div className="flex gap-2 justify-center">
+        <div className="mt-8 pt-6 border-t border-slate-800/85">
+          <p className="text-slate-500 text-xxs uppercase tracking-wider font-extrabold mb-4 text-center">One-Click Quick Login Portals</p>
+          <div className="flex flex-col gap-2.5">
             <button
               onClick={() => handleQuickLogin('admin@college.edu', 'adminpassword123')}
-              className="text-slate-300 hover:text-white bg-slate-850 hover:bg-slate-800 border border-slate-700/60 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all"
+              className="w-full text-slate-300 hover:text-white bg-slate-950/60 hover:bg-brand-600/10 border border-slate-800 hover:border-brand-500/30 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between px-4 transition-all group cursor-pointer"
             >
-              <Users size={12} className="text-brand-400" />
-              <span>Load Admin Credentials</span>
+              <div className="flex items-center gap-2">
+                <Users size={14} className="text-brand-400 group-hover:scale-110 transition-transform" />
+                <span>Administrator Portal</span>
+              </div>
+              <span className="text-[10px] text-slate-500 group-hover:text-brand-400 font-mono">admin@college.edu</span>
+            </button>
+
+            <button
+              onClick={() => handleQuickLogin('faculty@college.edu', 'facultypassword123')}
+              className="w-full text-slate-300 hover:text-white bg-slate-950/60 hover:bg-brand-600/10 border border-slate-800 hover:border-brand-500/30 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between px-4 transition-all group cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <UserCheck size={14} className="text-emerald-400 group-hover:scale-110 transition-transform" />
+                <span>Faculty Member Portal</span>
+              </div>
+              <span className="text-[10px] text-slate-500 group-hover:text-emerald-400 font-mono">faculty@college.edu</span>
+            </button>
+
+            <button
+              onClick={() => handleQuickLogin('student@college.edu', 'studentpassword123')}
+              className="w-full text-slate-300 hover:text-white bg-slate-950/60 hover:bg-brand-600/10 border border-slate-800 hover:border-brand-500/30 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between px-4 transition-all group cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <BookOpen size={14} className="text-amber-400 group-hover:scale-110 transition-transform" />
+                <span>Enrolled Student Portal</span>
+              </div>
+              <span className="text-[10px] text-slate-500 group-hover:text-amber-400 font-mono">student@college.edu</span>
             </button>
           </div>
         </div>

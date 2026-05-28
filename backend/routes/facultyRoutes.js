@@ -35,9 +35,10 @@ router.get('/courses', async (req, res) => {
 
     if (error) throw error;
 
-    // Map column naming conventions to support old frontend expectation
+    // Map column naming conventions and id to _id to support old frontend expectation
     const mappedCourses = courses.map(c => ({
       ...c,
+      _id: c.id,
       courseCode: c.course_code,
       facultyRef: c.faculty_id
     }));
@@ -71,9 +72,10 @@ router.get('/courses/:courseId/students', async (req, res) => {
 
     if (sErr) throw sErr;
     
-    // Map column naming conventions to support old frontend expectation
+    // Map column naming conventions and id to _id to support old frontend expectation
     const mapped = students.map(s => ({
       ...s,
+      _id: s.id,
       rollNumber: s.roll_number,
       currentSemester: s.current_semester,
       cgpa: parseFloat(s.cgpa)
@@ -92,6 +94,12 @@ router.post('/marks', async (req, res) => {
   const { studentId, courseId, type, marksObtained, maxMarks } = req.body;
 
   try {
+    // Sanitize UUID inputs
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(studentId) || !uuidRegex.test(courseId)) {
+      return res.status(400).json({ message: 'Invalid Student or Course selection (invalid UUID)' });
+    }
+
     // Upsert using ON CONFLICT (unique constraint on student_id, course_id, type)
     const { data: mark, error } = await supabase
       .from('marks')
@@ -107,7 +115,11 @@ router.post('/marks', async (req, res) => {
 
     if (error) throw error;
 
-    res.status(200).json(mark);
+    // Map id to _id for frontend compatibility
+    res.status(200).json({
+      ...mark,
+      _id: mark.id
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error saving marks record', error: error.message });
@@ -125,9 +137,10 @@ router.get('/marks/:courseId', async (req, res) => {
 
     if (error) throw error;
     
-    // Map column naming conventions to support old frontend expectation
+    // Map column naming conventions and id to _id to support old frontend expectation
     const mapped = marks.map(m => ({
       ...m,
+      _id: m.id,
       studentRef: m.studentRef ? { name: m.studentRef.name, rollNumber: m.studentRef.roll_number } : null,
       courseRef: m.courseRef ? { title: m.courseRef.title, courseCode: m.courseRef.course_code } : null,
       marksObtained: m.marks_obtained,

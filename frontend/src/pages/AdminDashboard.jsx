@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { 
   Users, BookOpen, Landmark, UserCheck, Trash2, Plus, LogOut, CheckCircle, 
-  Settings, Award, HelpCircle, FileSpreadsheet, PlusCircle, CreditCard 
+  Settings, Award, HelpCircle, FileSpreadsheet, PlusCircle, CreditCard, Edit2 
 } from 'lucide-react';
 
 const AdminDashboard = () => {
@@ -26,8 +26,34 @@ const AdminDashboard = () => {
 
   // Modals / forms state
   const [showFacultyModal, setShowFacultyModal] = useState(false);
+  const [showStudentModal, setShowStudentModal] = useState(false);
   const [showCourseModal, setShowCourseModal] = useState(false);
   const [showFeeModal, setShowFeeModal] = useState(false);
+  const [studentCreationTab, setStudentCreationTab] = useState('single');
+  const [newStudentForm, setNewStudentForm] = useState({
+    name: '', email: '', password: '', department: 'Computer Science', phone: ''
+  });
+  const [parsedStudentsPreview, setParsedStudentsPreview] = useState([]);
+  const [uploadResults, setUploadResults] = useState(null);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [pastedText, setPastedText] = useState('');
+  const [bulkInputMethod, setBulkInputMethod] = useState('upload'); // 'upload' or 'paste'
+
+  // Editing states
+  const [editingFaculty, setEditingFaculty] = useState(null);
+  const [editingStudent, setEditingStudent] = useState(null);
+  const [editingCourse, setEditingCourse] = useState(null);
+
+  // Edit forms state
+  const [editFacultyForm, setEditFacultyForm] = useState({
+    name: '', department: 'Computer Science', designation: '', phone: ''
+  });
+  const [editStudentForm, setEditStudentForm] = useState({
+    name: '', department: 'Computer Science', currentSemester: '1', phone: '', cgpa: 0.0
+  });
+  const [editCourseForm, setEditCourseForm] = useState({
+    title: '', department: 'Computer Science', semester: '1', credits: 3, facultyRef: ''
+  });
 
   // New item forms state
   const [facultyForm, setFacultyForm] = useState({
@@ -146,6 +172,227 @@ const AdminDashboard = () => {
     } catch (e) { console.error(e); }
   };
 
+  // Add Single Student
+  const handleAddStudent = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_URL}/admin/students`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(newStudentForm)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerMessage(`Student ${data.student.name} registered successfully with unique Roll Number: ${data.student.roll_number}`);
+        setShowStudentModal(false);
+        setNewStudentForm({ name: '', email: '', password: '', department: 'Computer Science', phone: '' });
+        fetchStudents();
+        fetchStats();
+      } else {
+        triggerMessage(data.message || 'Error creating student', 'error');
+      }
+    } catch (err) { triggerMessage('Network error', 'error'); }
+  };
+
+  // Bulk Student Upload
+  const handleBulkStudentUpload = async () => {
+    if (parsedStudentsPreview.length === 0) {
+      triggerMessage('Please select and parse a valid CSV or JSON file first.', 'error');
+      return;
+    }
+    
+    setUploadingFiles(true);
+    setUploadResults(null);
+    try {
+      const res = await fetch(`${API_URL}/admin/students/bulk`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ students: parsedStudentsPreview })
+      });
+      
+      const data = await res.json();
+      if (res.ok) {
+        setUploadResults(data);
+        fetchStudents();
+        fetchStats();
+        triggerMessage(`Bulk registration processed: ${data.createdCount} succeeded, ${data.failedCount} failed.`);
+        setParsedStudentsPreview([]);
+      } else {
+        triggerMessage(data.message || 'Error executing bulk registration', 'error');
+      }
+    } catch (err) {
+      triggerMessage('Network error submitting bulk students', 'error');
+    } finally {
+      setUploadingFiles(false);
+    }
+  };
+
+  // Handle file import parsing on frontend
+  const handleFileImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target.result;
+      
+      if (file.name.endsWith('.json')) {
+        try {
+          const parsed = JSON.parse(text);
+          if (Array.isArray(parsed)) {
+            setParsedStudentsPreview(parsed);
+            setUploadResults(null);
+            triggerMessage(`Imported ${parsed.length} rows from JSON! Review details in table below.`);
+          } else {
+            triggerMessage('JSON format must be a list of objects', 'error');
+          }
+        } catch (err) {
+          triggerMessage('Error parsing JSON file. Check syntax.', 'error');
+        }
+      } else if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
+        try {
+          const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+          if (lines.length < 2) {
+            triggerMessage('CSV file must have headers and at least one data row', 'error');
+            return;
+          }
+          
+          // Parse header
+          const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/^["']|["']$/g, ''));
+          
+          // Verify expected headers exist
+          const required = ['name', 'email', 'password', 'department', 'phone'];
+          const missing = required.filter(r => !headers.includes(r));
+          if (missing.length > 0) {
+            triggerMessage(`Missing mandatory headers: ${missing.join(', ')}`, 'error');
+            return;
+          }
+
+          const parsedList = lines.slice(1).map(line => {
+            const values = [];
+            let current = '';
+            let inQuotes = false;
+            for (let char of line) {
+              if (char === '"' || char === "'") {
+                inQuotes = !inQuotes;
+              } else if (char === ',' && !inQuotes) {
+                values.push(current.trim());
+                current = '';
+              } else {
+                current += char;
+              }
+            }
+            values.push(current.trim());
+
+            const obj = {};
+            headers.forEach((header, idx) => {
+              obj[header] = values[idx] || '';
+            });
+            
+            if (obj.department) {
+              const matched = departments.find(d => d.toLowerCase().includes(obj.department.toLowerCase())) || 'Computer Science';
+              obj.department = matched;
+            } else {
+              obj.department = 'Computer Science';
+            }
+            
+            return obj;
+          });
+
+          setParsedStudentsPreview(parsedList);
+          setUploadResults(null);
+          triggerMessage(`Successfully parsed ${parsedList.length} rows from CSV!`);
+        } catch (err) {
+          triggerMessage(`Error parsing CSV file: ${err.message}`, 'error');
+        }
+      } else {
+        triggerMessage('Unsupported file type. Use .csv or .json files.', 'error');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Handle parsing pasted text on frontend (supports both CSV and JSON formats)
+  const handlePasteParse = () => {
+    if (!pastedText || pastedText.trim() === '') {
+      triggerMessage('Please paste CSV or JSON formatted student records in the text field first.', 'error');
+      return;
+    }
+
+    const trimmed = pastedText.trim();
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        setParsedStudentsPreview(list);
+        setUploadResults(null);
+        triggerMessage(`Successfully parsed ${list.length} rows from pasted JSON!`);
+      } catch (err) {
+        triggerMessage('Error parsing pasted JSON text. Verify matching quotes, commas, and brackets.', 'error');
+      }
+    } else {
+      try {
+        const lines = trimmed.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) {
+          triggerMessage('Pasted CSV text must contain at least a header row and one data row.', 'error');
+          return;
+        }
+
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/^["']|["']$/g, ''));
+        
+        const required = ['name', 'email', 'password', 'department', 'phone'];
+        const missing = required.filter(r => !headers.includes(r));
+        if (missing.length > 0) {
+          triggerMessage(`Missing mandatory headers in pasted text: ${missing.join(', ')}`, 'error');
+          return;
+        }
+
+        const parsedList = lines.slice(1).map(line => {
+          const values = [];
+          let current = '';
+          let inQuotes = false;
+          for (let char of line) {
+            if (char === '"' || char === "'") {
+              inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+              values.push(current.trim());
+              current = '';
+            } else {
+              current += char;
+            }
+          }
+          values.push(current.trim());
+
+          const obj = {};
+          headers.forEach((header, idx) => {
+            obj[header] = values[idx] || '';
+          });
+          
+          if (obj.department) {
+            const matched = departments.find(d => d.toLowerCase().includes(obj.department.toLowerCase())) || 'Computer Science';
+            obj.department = matched;
+          } else {
+            obj.department = 'Computer Science';
+          }
+          
+          return obj;
+        });
+
+        setParsedStudentsPreview(parsedList);
+        setUploadResults(null);
+        triggerMessage(`Successfully parsed ${parsedList.length} rows from pasted CSV text!`);
+      } catch (err) {
+        triggerMessage(`Error parsing pasted CSV text: ${err.message}`, 'error');
+      }
+    }
+  };
+
   // Delete Student
   const handleDeleteStudent = async (id) => {
     if (!window.confirm('Delete this student profile?')) return;
@@ -241,6 +488,107 @@ const AdminDashboard = () => {
         fetchStats();
       }
     } catch (e) { console.error(e); }
+  };
+
+  // Editing Triggers
+  const startEditFaculty = (fac) => {
+    setEditingFaculty(fac);
+    setEditFacultyForm({
+      name: fac.name,
+      department: fac.department,
+      designation: fac.designation,
+      phone: fac.phone
+    });
+  };
+
+  const startEditStudent = (stud) => {
+    setEditingStudent(stud);
+    setEditStudentForm({
+      name: stud.name,
+      department: stud.department,
+      currentSemester: stud.currentSemester || stud.current_semester || '1',
+      phone: stud.phone,
+      cgpa: stud.cgpa || 0.0
+    });
+  };
+
+  const startEditCourse = (course) => {
+    setEditingCourse(course);
+    setEditCourseForm({
+      title: course.title,
+      department: course.department,
+      semester: course.semester,
+      credits: course.credits,
+      facultyRef: course.facultyRef ? course.facultyRef._id || course.facultyRef : ''
+    });
+  };
+
+  // Editing Handlers
+  const handleEditFacultySubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_URL}/admin/faculty/${editingFaculty._id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(editFacultyForm)
+      });
+      if (res.ok) {
+        triggerMessage('Faculty profile updated successfully!');
+        setEditingFaculty(null);
+        fetchFaculties();
+        fetchCourses();
+      } else {
+        const data = await res.json();
+        triggerMessage(data.message || 'Error updating faculty', 'error');
+      }
+    } catch (err) { triggerMessage('Network error', 'error'); }
+  };
+
+  const handleEditStudentSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_URL}/admin/students/${editingStudent._id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(editStudentForm)
+      });
+      if (res.ok) {
+        triggerMessage('Student profile updated successfully!');
+        setEditingStudent(null);
+        fetchStudents();
+      } else {
+        const data = await res.json();
+        triggerMessage(data.message || 'Error updating student', 'error');
+      }
+    } catch (err) { triggerMessage('Network error', 'error'); }
+  };
+
+  const handleEditCourseSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_URL}/admin/courses/${editingCourse._id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(editCourseForm)
+      });
+      if (res.ok) {
+        triggerMessage('Course catalog details updated successfully!');
+        setEditingCourse(null);
+        fetchCourses();
+      } else {
+        const data = await res.json();
+        triggerMessage(data.message || 'Error updating course', 'error');
+      }
+    } catch (err) { triggerMessage('Network error', 'error'); }
   };
 
   const departments = [
@@ -390,10 +738,20 @@ const AdminDashboard = () => {
                         <td className="p-4 text-sm text-slate-300">{fac.department}</td>
                         <td className="p-4 text-sm text-slate-300">{fac.designation}</td>
                         <td className="p-4 text-sm text-slate-400">{fac.userRef?.email || 'N/A'}</td>
-                        <td className="p-4">
+                        <td className="p-4 flex gap-1.5">
                           <button 
+                            type="button"
+                            onClick={() => startEditFaculty(fac)}
+                            className="text-amber-400 hover:text-amber-300 p-2 rounded-lg hover:bg-amber-500/10 transition-colors cursor-pointer"
+                            title="Edit Faculty"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button 
+                            type="button"
                             onClick={() => handleDeleteFaculty(fac._id)}
-                            className="text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/10 transition-colors"
+                            className="text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Delete Faculty"
                           >
                             <Trash2 size={16} />
                           </button>
@@ -415,7 +773,19 @@ const AdminDashboard = () => {
         {/* TAB 3: STUDENT MANAGEMENT */}
         {activeTab === 'students' && (
           <div className="space-y-6 animate-fade-in">
-            <h3 className="text-lg font-bold">Student Directory</h3>
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-bold">Student Directory</h3>
+              <button 
+                onClick={() => {
+                  setShowStudentModal(true);
+                  setUploadResults(null);
+                  setParsedStudentsPreview([]);
+                }}
+                className="bg-brand-600 hover:bg-brand-500 text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 text-sm transition-all"
+              >
+                <Plus size={16} /> Add Student
+              </button>
+            </div>
 
             <div className="bg-slate-950/40 border border-slate-800 rounded-2xl overflow-hidden">
               <div className="overflow-x-auto">
@@ -440,10 +810,20 @@ const AdminDashboard = () => {
                         <td className="p-4 text-sm text-slate-300">Sem {stud.currentSemester}</td>
                         <td className="p-4 text-sm text-slate-400">{stud.phone}</td>
                         <td className="p-4 font-bold text-amber-500">{stud.cgpa.toFixed(2)}</td>
-                        <td className="p-4">
+                        <td className="p-4 flex gap-1.5">
                           <button 
+                            type="button"
+                            onClick={() => startEditStudent(stud)}
+                            className="text-amber-400 hover:text-amber-300 p-2 rounded-lg hover:bg-amber-500/10 transition-colors cursor-pointer"
+                            title="Edit Student"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button 
+                            type="button"
                             onClick={() => handleDeleteStudent(stud._id)}
-                            className="text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/10 transition-colors"
+                            className="text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Delete Student"
                           >
                             <Trash2 size={16} />
                           </button>
@@ -504,10 +884,20 @@ const AdminDashboard = () => {
                             <span className="text-slate-500 text-xs italic">Unassigned</span>
                           )}
                         </td>
-                        <td className="p-4">
+                        <td className="p-4 flex gap-1.5">
                           <button 
+                            type="button"
+                            onClick={() => startEditCourse(course)}
+                            className="text-amber-400 hover:text-amber-300 p-2 rounded-lg hover:bg-amber-500/10 transition-colors cursor-pointer"
+                            title="Edit Course"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button 
+                            type="button"
                             onClick={() => handleDeleteCourse(course._id)}
-                            className="text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/10 transition-colors"
+                            className="text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Delete Course"
                           >
                             <Trash2 size={16} />
                           </button>
@@ -700,6 +1090,306 @@ const AdminDashboard = () => {
         </div>
       )}
 
+      {/* STUDENT REGISTRATION & BULK UPLOAD MODAL */}
+      {showStudentModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-2xl rounded-2xl p-6 space-y-6 my-8">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+              <div>
+                <h4 className="text-lg font-bold">Add New Student Portal</h4>
+                <p className="text-xxs text-slate-400 mt-0.5">Register a single student or batch-enroll via file upload</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowStudentModal(false);
+                  setParsedStudentsPreview([]);
+                  setUploadResults(null);
+                }} 
+                className="text-slate-400 hover:text-white font-bold text-xl"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* TAB SELECTOR */}
+            <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setStudentCreationTab('single');
+                  setUploadResults(null);
+                }}
+                className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+                  studentCreationTab === 'single'
+                    ? 'bg-brand-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Single Student Form
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStudentCreationTab('bulk');
+                  setUploadResults(null);
+                }}
+                className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+                  studentCreationTab === 'bulk'
+                    ? 'bg-brand-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Bulk CSV/JSON Import
+              </button>
+            </div>
+
+            {/* TAB 1: SINGLE STUDENT */}
+            {studentCreationTab === 'single' && (
+              <form onSubmit={handleAddStudent} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Full Name</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={newStudentForm.name} 
+                      onChange={e => setNewStudentForm({...newStudentForm, name: e.target.value})} 
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500 text-sm"
+                      placeholder="e.g. Alex Rivera"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Email Address</label>
+                    <input 
+                      type="email" 
+                      required
+                      value={newStudentForm.email} 
+                      onChange={e => setNewStudentForm({...newStudentForm, email: e.target.value})} 
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500 text-sm"
+                      placeholder="alex@college.edu"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Password</label>
+                    <input 
+                      type="password" 
+                      required
+                      value={newStudentForm.password} 
+                      onChange={e => setNewStudentForm({...newStudentForm, password: e.target.value})} 
+                      className="w-full bg-slate-955 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500 text-sm"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Department</label>
+                    <select 
+                      value={newStudentForm.department} 
+                      onChange={e => setNewStudentForm({...newStudentForm, department: e.target.value})} 
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none text-sm"
+                    >
+                      {departments.map(dept => <option key={dept} value={dept}>{dept}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Phone Number</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={newStudentForm.phone} 
+                    onChange={e => setNewStudentForm({...newStudentForm, phone: e.target.value})} 
+                    className="w-full bg-slate-955 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500 text-sm"
+                    placeholder="e.g. 9876543210"
+                  />
+                </div>
+
+                <div className="p-3.5 bg-brand-500/5 border border-brand-500/10 rounded-xl text-xxs leading-relaxed text-brand-300">
+                  ⚡ <strong>AuraERP Automated System</strong>: The student's unique Roll Number will be automatically generated by the backend and assigned during registration.
+                </div>
+
+                <div className="pt-2 flex gap-2">
+                  <button type="button" onClick={() => setShowStudentModal(false)} className="flex-1 bg-slate-950 text-slate-300 font-semibold py-2.5 rounded-xl border border-slate-800 text-sm">Cancel</button>
+                  <button type="submit" className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-xl transition-all text-sm">Register Student</button>
+                </div>
+              </form>
+            )}
+
+            {/* TAB 2: BULK IMPORT */}
+            {studentCreationTab === 'bulk' && (
+              <div className="space-y-4">
+                
+                {/* SUB-METHOD SELECTOR */}
+                <div className="flex gap-4 border-b border-slate-800 pb-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkInputMethod('upload');
+                      setParsedStudentsPreview([]);
+                      setUploadResults(null);
+                    }}
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
+                      bulkInputMethod === 'upload'
+                        ? 'bg-slate-800 text-brand-400 border-brand-500/30'
+                        : 'text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    📁 Upload Document
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkInputMethod('paste');
+                      setParsedStudentsPreview([]);
+                      setUploadResults(null);
+                    }}
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
+                      bulkInputMethod === 'paste'
+                        ? 'bg-slate-800 text-brand-400 border-brand-500/30'
+                        : 'text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    📝 Paste Raw Data
+                  </button>
+                </div>
+
+                {bulkInputMethod === 'upload' ? (
+                  /* Upload Area */
+                  <div className="border-2 border-dashed border-slate-800 hover:border-brand-500 rounded-2xl p-6 text-center transition-all bg-slate-950/40 relative">
+                    <input 
+                      type="file" 
+                      accept=".csv, .json"
+                      onChange={handleFileImport}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <div className="space-y-2">
+                      <div className="text-3xl">📤</div>
+                      <h5 className="font-bold text-sm">Choose CSV or JSON File</h5>
+                      <p className="text-xxs text-slate-400 max-w-sm mx-auto">
+                        Drag & drop your file here or browse computer. Files will be parsed securely on your device before uploading.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  /* Paste Area */
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Paste CSV or JSON Student Roster</label>
+                      <textarea
+                        rows="5"
+                        value={pastedText}
+                        onChange={e => setPastedText(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-brand-500 text-xs font-mono"
+                        placeholder="name, email, password, department, phone&#10;Alex Rivera, alex@college.edu, password123, Computer Science, 9876543210&#10;Jane Doe, jane@college.edu, password123, Information Technology, 9876543211"
+                      ></textarea>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handlePasteParse}
+                      className="w-full bg-slate-850 hover:bg-slate-800 text-white font-semibold py-2.5 rounded-xl border border-slate-800 text-xs transition-all cursor-pointer"
+                    >
+                      🔍 Parse Pasted Text
+                    </button>
+                  </div>
+                )}
+
+                {/* Templates Helper */}
+                <div className="bg-slate-950 p-4 border border-slate-850 rounded-xl space-y-1.5 text-xxs">
+                  <span className="font-bold text-slate-300 uppercase tracking-wider text-xxxs block mb-1">Required Headers & Layout</span>
+                  <div className="font-mono text-slate-400 bg-slate-900/60 p-2 rounded border border-slate-800/60 overflow-x-auto">
+                    name, email, password, department, phone<br />
+                    Jane Doe, jane@college.edu, pass123, Computer Science, 9998887776
+                  </div>
+                  <p className="text-slate-500">
+                    * Roll Number is **auto-generated** dynamically for each user during execution. Valid departments: {departments.slice(0, 3).join(', ')}, etc.
+                  </p>
+                </div>
+
+                {/* Parsed List Preview */}
+                {parsedStudentsPreview.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-brand-400">Parsed File Preview ({parsedStudentsPreview.length} students detected)</span>
+                      <button 
+                        onClick={() => setParsedStudentsPreview([])}
+                        className="text-xxs text-red-400 underline hover:text-red-300"
+                      >
+                        Clear File
+                      </button>
+                    </div>
+                    
+                    <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden max-h-48 overflow-y-auto">
+                      <table className="w-full text-left border-collapse text-xxs">
+                        <thead>
+                          <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 uppercase tracking-wider">
+                            <th className="p-2">Name</th>
+                            <th className="p-2">Email</th>
+                            <th className="p-2">Department</th>
+                            <th className="p-2">Phone</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {parsedStudentsPreview.map((p, idx) => (
+                            <tr key={idx} className="border-b border-slate-800/40 text-slate-300">
+                              <td className="p-2 font-semibold">{p.name || <span className="text-red-400 italic">Missing</span>}</td>
+                              <td className="p-2 text-slate-400">{p.email}</td>
+                              <td className="p-2">{p.department}</td>
+                              <td className="p-2">{p.phone}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <button
+                      onClick={handleBulkStudentUpload}
+                      disabled={uploadingFiles}
+                      className="w-full bg-brand-600 hover:bg-brand-500 text-white font-semibold py-3 rounded-xl transition-all text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-brand-600/10 active:scale-[0.99] disabled:opacity-50"
+                    >
+                      {uploadingFiles ? 'Uploading Batch...' : '✓ Commit Batch Enrollment'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Upload Results Feed */}
+                {uploadResults && (
+                  <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-xl space-y-3 animate-fade-in text-xxs">
+                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                      <h6 className="font-bold text-slate-200">Execution Report</h6>
+                      <div className="flex gap-2.5">
+                        <span className="text-emerald-400 font-bold">Successes: {uploadResults.createdCount}</span>
+                        <span className="text-red-400 font-bold">Failures: {uploadResults.failedCount}</span>
+                      </div>
+                    </div>
+
+                    {uploadResults.errors.length > 0 ? (
+                      <div className="space-y-2">
+                        <span className="text-amber-400 font-semibold block uppercase tracking-wider text-xxxs">Details of Failures</span>
+                        <div className="max-h-32 overflow-y-auto space-y-1.5 font-mono text-[10px] bg-slate-900/60 p-2 border border-slate-800/60 rounded">
+                          {uploadResults.errors.map((err, idx) => (
+                            <div key={idx} className="text-red-300 border-b border-slate-950/40 pb-1">
+                              ⚠️ Row {err.row} ({err.email}): <strong className="text-red-400">{err.message}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-emerald-400 font-bold text-center py-2">
+                        🎉 All students were registered and assigned unique Roll Numbers successfully without errors!
+                      </div>
+                    )}
+                  </div>
+                )}
+
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* COURSE CREATION MODAL */}
       {showCourseModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -865,6 +1555,226 @@ const AdminDashboard = () => {
               <div className="pt-4 flex gap-2">
                 <button type="button" onClick={() => setShowFeeModal(false)} className="flex-1 bg-slate-950 text-slate-300 font-semibold py-2.5 rounded-xl border border-slate-800">Cancel</button>
                 <button type="submit" className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-xl transition-all">Publish Invoice</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT FACULTY MODAL */}
+      {editingFaculty && (
+        <div className="fixed inset-0 z-50 bg-slate-955/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-2xl p-6 space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+              <h4 className="text-lg font-bold">Edit Faculty Member</h4>
+              <button type="button" onClick={() => setEditingFaculty(null)} className="text-slate-400 hover:text-white font-bold cursor-pointer">×</button>
+            </div>
+
+            <form onSubmit={handleEditFacultySubmit} className="space-y-4">
+              <div>
+                <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Full Name</label>
+                <input 
+                  type="text" 
+                  required
+                  value={editFacultyForm.name} 
+                  onChange={e => setEditFacultyForm({...editFacultyForm, name: e.target.value})} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Department</label>
+                  <select 
+                    value={editFacultyForm.department} 
+                    onChange={e => setEditFacultyForm({...editFacultyForm, department: e.target.value})} 
+                    className="w-full bg-slate-955 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none"
+                  >
+                    {departments.map(dept => <option key={dept} value={dept}>{dept}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Designation</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={editFacultyForm.designation} 
+                    onChange={e => setEditFacultyForm({...editFacultyForm, designation: e.target.value})} 
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Phone Number</label>
+                <input 
+                  type="text" 
+                  required
+                  value={editFacultyForm.phone} 
+                  onChange={e => setEditFacultyForm({...editFacultyForm, phone: e.target.value})} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <div className="pt-4 flex gap-2">
+                <button type="button" onClick={() => setEditingFaculty(null)} className="flex-1 bg-slate-950 text-slate-300 font-semibold py-2.5 rounded-xl border border-slate-800 cursor-pointer">Cancel</button>
+                <button type="submit" className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-xl transition-all cursor-pointer">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT STUDENT MODAL */}
+      {editingStudent && (
+        <div className="fixed inset-0 z-50 bg-slate-955/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-2xl p-6 space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+              <h4 className="text-lg font-bold">Edit Student Profile</h4>
+              <button type="button" onClick={() => setEditingStudent(null)} className="text-slate-400 hover:text-white font-bold cursor-pointer">×</button>
+            </div>
+
+            <form onSubmit={handleEditStudentSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Full Name</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={editStudentForm.name} 
+                    onChange={e => setEditStudentForm({...editStudentForm, name: e.target.value})} 
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Phone Number</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={editStudentForm.phone} 
+                    onChange={e => setEditStudentForm({...editStudentForm, phone: e.target.value})} 
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Department</label>
+                  <select 
+                    value={editStudentForm.department} 
+                    onChange={e => setEditStudentForm({...editStudentForm, department: e.target.value})} 
+                    className="w-full bg-slate-955 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none"
+                  >
+                    {departments.map(dept => <option key={dept} value={dept}>{dept}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Semester</label>
+                  <select 
+                    value={editStudentForm.currentSemester} 
+                    onChange={e => setEditStudentForm({...editStudentForm, currentSemester: e.target.value})} 
+                    className="w-full bg-slate-955 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none"
+                  >
+                    {['1','2','3','4','5','6','7','8'].map(sem => <option key={sem} value={sem}>Sem {sem}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Cumulative CGPA</label>
+                <input 
+                  type="number" 
+                  step="0.01"
+                  min="0.00"
+                  max="10.00"
+                  required
+                  value={editStudentForm.cgpa} 
+                  onChange={e => setEditStudentForm({...editStudentForm, cgpa: e.target.value})} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <div className="pt-4 flex gap-2">
+                <button type="button" onClick={() => setEditingStudent(null)} className="flex-1 bg-slate-950 text-slate-300 font-semibold py-2.5 rounded-xl border border-slate-800 cursor-pointer">Cancel</button>
+                <button type="submit" className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-xl transition-all cursor-pointer">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT COURSE MODAL */}
+      {editingCourse && (
+        <div className="fixed inset-0 z-50 bg-slate-955/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl p-6 space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+              <h4 className="text-lg font-bold">Edit Course Details</h4>
+              <button type="button" onClick={() => setEditingCourse(null)} className="text-slate-400 hover:text-white font-bold cursor-pointer">×</button>
+            </div>
+
+            <form onSubmit={handleEditCourseSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Course Title</label>
+                <input 
+                  type="text" 
+                  required
+                  value={editCourseForm.title} 
+                  onChange={e => setEditCourseForm({...editCourseForm, title: e.target.value})} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Department</label>
+                  <select 
+                    value={editCourseForm.department} 
+                    onChange={e => setEditCourseForm({...editCourseForm, department: e.target.value})} 
+                    className="w-full bg-slate-955 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none"
+                  >
+                    {departments.map(dept => <option key={dept} value={dept}>{dept}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Credits</label>
+                  <input 
+                    type="number" 
+                    required
+                    value={editCourseForm.credits} 
+                    onChange={e => setEditCourseForm({...editCourseForm, credits: parseInt(e.target.value)})} 
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Semester</label>
+                  <select 
+                    value={editCourseForm.semester} 
+                    onChange={e => setEditCourseForm({...editCourseForm, semester: e.target.value})} 
+                    className="w-full bg-slate-955 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none"
+                  >
+                    {['1','2','3','4','5','6','7','8'].map(sem => <option key={sem} value={sem}>Semester {sem}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xxs font-bold uppercase tracking-wider text-slate-400 mb-1">Instructor</label>
+                  <select 
+                    value={editCourseForm.facultyRef} 
+                    onChange={e => setEditCourseForm({...editCourseForm, facultyRef: e.target.value})} 
+                    className="w-full bg-slate-955 border border-slate-800 rounded-xl px-4 py-2.5 text-white focus:outline-none"
+                  >
+                    <option value="">Unassigned</option>
+                    {faculties.map(f => <option key={f._id} value={f._id}>{f.name} ({f.department})</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-4 flex gap-2">
+                <button type="button" onClick={() => setEditingCourse(null)} className="flex-1 bg-slate-950 text-slate-300 font-semibold py-2.5 rounded-xl border border-slate-800 cursor-pointer">Cancel</button>
+                <button type="submit" className="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-xl transition-all cursor-pointer">Save Changes</button>
               </div>
             </form>
           </div>
